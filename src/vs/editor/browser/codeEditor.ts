@@ -69,6 +69,9 @@ export class CodeEditor extends CodeEditorWidget {
 		toolbarDomElement.style.cssText = `
 		position: absolute;
 		top: 0; left: 0; width: 100%; height: ${toolbarHeight};
+		padding-top: 0.6em;
+		padding-left: 1em;
+		background: linear-gradient(#1e1e1e, black);
 		`;
 		toolbarDomElement.innerHTML = 'toolbar <button> ok </button> <button> cancel </button>';
 		containerDomElement.appendChild(toolbarDomElement);
