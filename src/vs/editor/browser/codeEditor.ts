@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import 'vs/css!./codeEditor';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { ICommandService } from 'vs/platform/commands/common/commands';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
@@ -16,7 +17,7 @@ import { IEditorOptions } from 'vs/editor/common/config/editorOptions';
 import { IThemeService } from 'vs/platform/theme/common/themeService';
 import * as editorCommon from 'vs/editor/common/editorCommon';
 import { IPosition } from 'vs/editor/common/core/position';
-import { IRange } from 'vs/editor/common/core/range';
+import { Range, IRange } from 'vs/editor/common/core/range';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IDisposable } from 'vs/base/common/lifecycle';
 import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
@@ -224,6 +225,91 @@ export class CodeEditor extends CodeEditorWidget {
 		this.updateWithBreadcrumbSymbols(matchingSymbols);
 	}
 
+	private highlighted: string;
+	private toHighlightRange: IRange;
+	private highlightQueued: boolean;
+	private queueDehighlight: any;
+
+	private highightSymbol(symbol: SymbolInformation, highlightRange: IRange) {
+		if (this.queueDehighlight) {
+			clearTimeout(this.queueDehighlight);
+		}
+
+		this.toHighlightRange = highlightRange;
+
+		if (!this.highlightQueued) {
+			this.highlightQueued = true;
+			this.changeDecorations(changeAccessor => {
+				this.highlightQueued = false;
+
+				if (this.highlighted) {
+					changeAccessor.removeDecoration(this.highlighted);
+					this.highlighted = null;
+				}
+
+				if (this.toHighlightRange) {
+					const highlightId = changeAccessor.addDecoration(
+						this.toHighlightRange,
+						{
+							inlineClassName: 'navigation-symbol-highlight'
+						});
+					this.highlighted = highlightId;
+					this.toHighlightRange = null;
+					this.queueDehighlight = setTimeout(() => {
+						this.highightSymbol(null, null);
+					}, 500);
+				}
+			});
+		}
+	}
+
+	private symbolClick(symbol: SymbolInformation) {
+
+		this.highightSymbol(null, null);
+
+		let newPos = {
+			lineNumber: symbol.location.range.startLineNumber,
+			column: symbol.location.range.startColumn
+		};
+
+		const model = this.getModel();
+
+		if (model) {
+			let symStartLineNumber = newPos.lineNumber;
+			let selectionLine = model.getLineContent(symStartLineNumber);
+			let symStartColumn = selectionLine.indexOf(symbol.name);
+			if (symStartColumn < 0 && symbol.location.range.endLineNumber > symbol.location.range.startLineNumber) {
+				symStartLineNumber++;
+				selectionLine = model.getLineContent(symStartLineNumber);
+				symStartColumn = selectionLine.indexOf(symbol.name);
+			}
+
+			if (symStartColumn >= 0) {
+				let highlightRange = new Range(
+					symStartLineNumber, symStartColumn + 1,
+					symStartLineNumber, symStartColumn + 1 + symbol.name.length);
+				newPos = {
+					lineNumber: highlightRange.startLineNumber,
+					column: highlightRange.startColumn
+				};
+
+				this.highightSymbol(symbol, highlightRange);
+			}
+		}
+
+		this.setPosition(newPos);
+		const visibleRange = this.getCompletelyVisibleLinesRangeInViewport();
+		if (!this.positionWithinRange(newPos, visibleRange)) {
+			const posTop = this.getTopForLineNumber(newPos.lineNumber);
+			this.setScrollTop(posTop - 10);
+		}
+
+		setTimeout(() => {
+			this.focus();
+		}, 1);
+
+	}
+
 	private updateWithBreadcrumbSymbols(matchingSymbols: SymbolInformation[]) {
 		const highlightSymbol = matchingSymbols[matchingSymbols.length - 1];
 		let extraSymbolsTrail: SymbolInformation[];
@@ -287,22 +373,7 @@ export class CodeEditor extends CodeEditorWidget {
 				symSpan.style.opacity = '0.7';
 			}
 
-			symSpan.onclick = () => {
-				const newPos = {
-					lineNumber: sym.location.range.startLineNumber,
-					column: sym.location.range.startColumn
-				};
-				this.setPosition(newPos);
-				const visibleRange = this.getCompletelyVisibleLinesRangeInViewport();
-				if (!this.positionWithinRange(newPos, visibleRange)) {
-					const posTop = this.getTopForLineNumber(newPos.lineNumber);
-					this.setScrollTop(posTop - 10);
-				}
-
-				setTimeout(() => {
-					this.focus();
-				}, 1);
-			};
+			symSpan.onclick = () => this.symbolClick(sym);
 			symSpan.textContent = sym.name;
 			symSpan.title = SymbolKind[sym.kind] + ' @' + sym.containerName;
 			this.toolbarDomElement.appendChild(symSpan);
@@ -343,6 +414,7 @@ export class CodeEditor extends CodeEditorWidget {
 			this.disposeContentEditEvent = model.onDidChangeContent(() => {
 				this.allSymbolsSorted = null;
 				this.queueUpdateToolbar();
+				this.highightSymbol(null, null);
 			});
 		}
 	}
