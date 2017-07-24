@@ -15,7 +15,7 @@ import { EditorBrowserRegistry } from 'vs/editor/browser/editorBrowserExtensions
 import { IEditorOptions } from 'vs/editor/common/config/editorOptions';
 import { IThemeService } from 'vs/platform/theme/common/themeService';
 import * as editorCommon from 'vs/editor/common/editorCommon';
-import { Position } from 'vs/editor/common/core/position';
+import { IPosition } from 'vs/editor/common/core/position';
 import { IRange } from 'vs/editor/common/core/range';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IDisposable } from 'vs/base/common/lifecycle';
@@ -32,7 +32,8 @@ export class CodeEditor extends CodeEditorWidget {
 	private updateToolbarTimeout;
 	private updateToolbarClosure;
 	private updateToolbarTokenSource: CancellationTokenSource;
-	private symbols: SymbolInformation[];
+	private allSymbolsSorted: SymbolInformation[];
+	private breadcrumbSymbols: SymbolInformation[];
 	private disposeCursorPositionEvent: IDisposable;
 	private disposeContentEditEvent: IDisposable;
 
@@ -123,8 +124,8 @@ export class CodeEditor extends CodeEditorWidget {
 	}
 
 	private updateToolbar(): void {
-		if (this.symbols && this.symbols.length) {
-			this.updateToolbarWithSymbols(this.symbols);
+		if (this.allSymbolsSorted && this.allSymbolsSorted.length) {
+			this.updateToolbarWithSymbols(this.allSymbolsSorted);
 			return;
 		}
 
@@ -220,6 +221,52 @@ export class CodeEditor extends CodeEditorWidget {
 			}
 		}
 
+		this.updateWithBreadcrumbSymbols(matchingSymbols);
+	}
+
+	private updateWithBreadcrumbSymbols(matchingSymbols: SymbolInformation[]) {
+		const highlightSymbol = matchingSymbols[matchingSymbols.length - 1];
+		let extraSymbolsTrail: SymbolInformation[];
+		if (this.breadcrumbSymbols
+			&& matchingSymbols.length
+			&& this.breadcrumbSymbols.length > matchingSymbols.length) {
+			extraSymbolsTrail = this.breadcrumbSymbols.slice(matchingSymbols.length);
+
+			// all leading symbols should match location
+			for (var i = 0; i < matchingSymbols.length; i++) {
+				if (!this.rangeWithinRange(this.breadcrumbSymbols[i].location.range, matchingSymbols[i].location.range)
+					|| !this.rangeWithinRange(matchingSymbols[i].location.range, this.breadcrumbSymbols[i].location.range)) {
+					extraSymbolsTrail = null;
+					break;
+				}
+			}
+
+			// all trail symbols should be inside the last matching symbol
+			if (extraSymbolsTrail) {
+				for (var i = 0; i < extraSymbolsTrail.length; i++) {
+					if (!this.rangeWithinRange(extraSymbolsTrail[i].location.range, highlightSymbol.location.range)) {
+						extraSymbolsTrail = null;
+						break;
+					}
+				}
+			}
+
+			if (extraSymbolsTrail) {
+				matchingSymbols = matchingSymbols.concat(extraSymbolsTrail);
+			}
+		}
+
+		this.breadcrumbSymbols = matchingSymbols;
+
+		const position = this.getPosition();
+
+		for (var i = 0; i < matchingSymbols.length; i++) {
+			const sym = matchingSymbols[i];
+			if (!this.positionWithinRange(position, sym.location.range)) {
+				continue;
+			}
+		}
+
 		this.clearToolbar();
 		for (var i = 0; i < matchingSymbols.length; i++) {
 			if (i) {
@@ -233,17 +280,23 @@ export class CodeEditor extends CodeEditorWidget {
 
 			const symSpan = document.createElement('span');
 			symSpan.style.cssText = 'cursor: pointer;';
+			if (sym === highlightSymbol) {
+				symSpan.style.color = 'gold';
+			}
+			else if (extraSymbolsTrail && i > matchingSymbols.length - extraSymbolsTrail.length) {
+				symSpan.style.opacity = '0.7';
+			}
+
 			symSpan.onclick = () => {
 				const newPos = {
 					lineNumber: sym.location.range.startLineNumber,
 					column: sym.location.range.startColumn
 				};
 				this.setPosition(newPos);
-				const posTop = this.getTopForLineNumber(newPos.lineNumber);
-				const scrollTop = this.getScrollTop();
-				const scrollHeight = this.getScrollHeight();
-				if (posTop < scrollTop || posTop > scrollTop + scrollHeight) {
-					this.setScrollTop(posTop);
+				const visibleRange = this.getCompletelyVisibleLinesRangeInViewport();
+				if (!this.positionWithinRange(newPos, visibleRange)) {
+					const posTop = this.getTopForLineNumber(newPos.lineNumber);
+					this.setScrollTop(posTop - 10);
 				}
 
 				setTimeout(() => {
@@ -254,13 +307,18 @@ export class CodeEditor extends CodeEditorWidget {
 			symSpan.title = SymbolKind[sym.kind] + ' @' + sym.containerName;
 			this.toolbarDomElement.appendChild(symSpan);
 		}
+
 	}
 
-	private positionWithinRange(position: Position, range: IRange) {
-		if (position.lineNumber > range.startLineNumber
-			|| (position.lineNumber === range.startLineNumber && position.column >= range.startColumn)) {
-			if (position.lineNumber < range.endLineNumber
-				|| (position.lineNumber === range.endLineNumber && position.column && position.column <= range.endColumn)) {
+	private positionWithinRange(position: IPosition, withinRange: IRange) {
+		return this.positionPairWithinRange(position.lineNumber, position.column, withinRange);
+	}
+
+	private positionPairWithinRange(lineNumber: number, column: number, withinRange: IRange) {
+		if (lineNumber > withinRange.startLineNumber
+			|| (lineNumber === withinRange.startLineNumber && column >= withinRange.startColumn)) {
+			if (lineNumber < withinRange.endLineNumber
+				|| (lineNumber === withinRange.endLineNumber && column && column <= withinRange.endColumn)) {
 				return true;
 			}
 		}
@@ -268,17 +326,22 @@ export class CodeEditor extends CodeEditorWidget {
 		return false;
 	}
 
+	private rangeWithinRange(testRange: IRange, withinRange: IRange) {
+		return this.positionPairWithinRange(testRange.startLineNumber, testRange.startColumn, withinRange) &&
+			this.positionPairWithinRange(testRange.endLineNumber, testRange.endColumn, withinRange);
+	}
+
 	_attachModel(model: editorCommon.IModel): void {
 		if (this.disposeContentEditEvent) {
 			this.disposeContentEditEvent.dispose();
 			this.disposeContentEditEvent = null;
 		}
-		this.symbols = null;
+		this.allSymbolsSorted = null;
 		this.queueUpdateToolbar();
 		super._attachModel(model);
 		if (model) {
 			this.disposeContentEditEvent = model.onDidChangeContent(() => {
-				this.symbols = null;
+				this.allSymbolsSorted = null;
 				this.queueUpdateToolbar();
 			});
 		}
