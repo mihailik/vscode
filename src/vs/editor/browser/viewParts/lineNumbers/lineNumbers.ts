@@ -26,6 +26,7 @@ export class LineNumbersOverlay extends DynamicViewOverlay {
 	private _renderLineNumbers: RenderLineNumbersType;
 	private _renderCustomLineNumbers: (lineNumber: number) => string;
 	private _lineNumbersLeft: number;
+	private _lineNumbersTop: number;
 	private _lineNumbersWidth: number;
 	private _lastCursorModelPosition: Position;
 	private _renderResult: string[];
@@ -47,6 +48,7 @@ export class LineNumbersOverlay extends DynamicViewOverlay {
 		this._renderLineNumbers = config.viewInfo.renderLineNumbers;
 		this._renderCustomLineNumbers = config.viewInfo.renderCustomLineNumbers;
 		this._lineNumbersLeft = config.layoutInfo.lineNumbersLeft;
+		this._lineNumbersTop = config.layoutInfo.lineNumbersTop;
 		this._lineNumbersWidth = config.layoutInfo.lineNumbersWidth;
 	}
 
@@ -134,7 +136,9 @@ export class LineNumbersOverlay extends DynamicViewOverlay {
 		let lineHeightClassName = (platform.isLinux ? (this._lineHeight % 2 === 0 ? ' lh-even' : ' lh-odd') : '');
 		let visibleStartLineNumber = ctx.visibleRange.startLineNumber;
 		let visibleEndLineNumber = ctx.visibleRange.endLineNumber;
-		let common = '<div class="' + LineNumbersOverlay.CLASS_NAME + lineHeightClassName + '" style="left:' + this._lineNumbersLeft.toString() + 'px;width:' + this._lineNumbersWidth.toString() + 'px;">';
+		let common =
+			'<div class="' + LineNumbersOverlay.CLASS_NAME + lineHeightClassName +
+			'" style="left:' + this._lineNumbersLeft.toString() + 'px;top:' + this._lineNumbersTop + 'width:' + this._lineNumbersWidth.toString() + 'px;">';
 
 		let output: string[] = [];
 		for (let lineNumber = visibleStartLineNumber; lineNumber <= visibleEndLineNumber; lineNumber++) {
